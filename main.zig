@@ -24,30 +24,35 @@ pub fn main() !void {
             std.debug.print("error accept: {any}\n", .{err});
             continue;
         };
-        //defer posix.close(conn);
 
-        std.debug.print("Connection received\n", .{});
-        var requestBuffer: [1024 * 1024]u8 = undefined;
-        var responseBuffer: [1024 * 1024]u8 = undefined;
-        while (true) {
-            const n = try socket.readUntilNewLine(conn, &requestBuffer);
-            if (n == 0) {
-                break;
-            }
+        const thread = try std.Thread.spawn(.{}, handleConnection, .{conn});
+        thread.detach();
+    }
+}
 
-            const cmdResponse = command.parse(requestBuffer[0..n]) orelse {
-                std.debug.print("Failed to parse message\n", .{});
-                socket.write(conn, "false\n") catch |err| {
-                    std.debug.print("error writing: {any}\n", .{err});
-                };
-                continue;
-            };
+pub fn handleConnection(conn: posix.socket_t) !void {
+    defer posix.close(conn);
 
-            @memcpy(responseBuffer[0..cmdResponse.len], cmdResponse);
-            responseBuffer[cmdResponse.len] = '\n';
-            socket.write(conn, responseBuffer[0 .. cmdResponse.len + 1]) catch |err| {
+    var requestBuffer: [1024 * 1024]u8 = undefined;
+    var responseBuffer: [1024 * 1024]u8 = undefined;
+    while (true) {
+        const n = try socket.readUntilNewLine(conn, &requestBuffer);
+        if (n == 0) {
+            break;
+        }
+
+        const cmdResponse = command.parse(requestBuffer[0..n]) orelse {
+            std.debug.print("Failed to parse message\n", .{});
+            socket.write(conn, "false\n") catch |err| {
                 std.debug.print("error writing: {any}\n", .{err});
             };
-        }
+            continue;
+        };
+
+        @memcpy(responseBuffer[0..cmdResponse.len], cmdResponse);
+        responseBuffer[cmdResponse.len] = '\n';
+        socket.write(conn, responseBuffer[0 .. cmdResponse.len + 1]) catch |err| {
+            std.debug.print("error writing: {any}\n", .{err});
+        };
     }
 }
