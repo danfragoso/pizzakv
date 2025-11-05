@@ -11,12 +11,7 @@ const Command = enum {
 fn parseKeyValue(buf: []const u8) ?[2][]const u8 {
     var kvIterator = std.mem.splitAny(u8, buf, "|");
     const key = kvIterator.first();
-    const value = kvIterator.next() orelse {
-        std.debug.print("No value found for key: {s}\n", .{key});
-        return null;
-    };
-
-    return [2][]const u8{ key, value };
+    return [2][]const u8{ key, kvIterator.rest() };
 }
 
 pub fn parse(msg: []const u8) ?[]const u8 {
@@ -32,10 +27,7 @@ pub fn parse(msg: []const u8) ?[]const u8 {
 
     switch (command) {
         .read => {
-            const key = messageIterator.next() orelse {
-                std.debug.print("No key provided for read command\n", .{});
-                return null;
-            };
+            const key = messageIterator.rest();
 
             const value = storage.read(key) orelse {
                 std.debug.print("Key not found in storage: {s}\n", .{key});
@@ -45,14 +37,11 @@ pub fn parse(msg: []const u8) ?[]const u8 {
             return value;
         },
         .write => {
-            const kvPair = messageIterator.next() orelse {
-                std.debug.print("No key-value pair provided for read command\n", .{});
-                return null;
-            };
+            const kvPair = messageIterator.rest();
 
             const kv = parseKeyValue(kvPair) orelse {
                 std.debug.print("Failed to parse key-value pair\n", .{});
-                return null;
+                return "false";
             };
 
             if (storage.write(kv[0], kv[1])) {
@@ -64,7 +53,7 @@ pub fn parse(msg: []const u8) ?[]const u8 {
         },
         .delete => {
             std.debug.print("Delete command received\n", .{});
-            return null;
+            return "false";
         },
         .status => {
             std.debug.print("Status command received\n", .{});
