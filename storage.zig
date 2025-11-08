@@ -5,6 +5,8 @@ var buf: [backend_size][]const u8 = undefined;
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = arena.allocator();
 
+const EMPTY = "";
+
 pub fn hashKey(k: []const u8) u32 {
     return djb2(k);
     //return xoramasrosas(k);
@@ -44,5 +46,19 @@ pub fn write(key: []const u8, value: []const u8) bool {
 
 pub fn read(key: []const u8) ?[]const u8 {
     const hash = hashKey(key);
+    if (buf[hash % buf.len].len == 0) {
+        return null;
+    }
+
     return buf[hash % buf.len];
+}
+
+pub fn delete(key: []const u8) bool {
+    const hash = hashKey(key);
+    if (hash % buf.len >= buf.len) {
+        return false;
+    }
+
+    buf[hash % buf.len] = EMPTY;
+    return true;
 }

@@ -1,6 +1,9 @@
 const std = @import("std");
 const storage = @import("storage.zig");
 
+const FAILURE_RESPONSE = "error";
+const SUCCESS_RESPONSE = "success";
+
 const Command = enum {
     read,
     write,
@@ -15,13 +18,13 @@ fn parseKeyValue(buf: []const u8) ?[2][]const u8 {
 }
 
 pub fn parse(msg: []const u8) ?[]const u8 {
-    const trimSet = [_]u8{ '\n', ' ' };
+    const trimSet = [_]u8{ '\n', ' ', '\r' };
     const cleanMsg = std.mem.trim(u8, msg, &trimSet);
     var messageIterator = std.mem.splitAny(u8, cleanMsg, " ");
 
     const cmdString = messageIterator.first();
     const command = std.meta.stringToEnum(Command, cmdString) orelse {
-        std.debug.print("Failed to parse command\n", .{});
+        std.debug.print("Failed to parse command: {s}\n", .{cmdString});
         return null;
     };
 
@@ -31,7 +34,7 @@ pub fn parse(msg: []const u8) ?[]const u8 {
 
             const value = storage.read(key) orelse {
                 std.debug.print("Key not found in storage: {s}\n", .{key});
-                return "false";
+                return FAILURE_RESPONSE;
             };
 
             return value;
@@ -40,23 +43,27 @@ pub fn parse(msg: []const u8) ?[]const u8 {
             const kvPair = messageIterator.rest();
 
             const kv = parseKeyValue(kvPair) orelse {
-                std.debug.print("Failed to parse key-value pair\n", .{});
-                return "false";
+                std.debug.print("Failed to parse key-value pair", .{});
+                return FAILURE_RESPONSE;
             };
 
             if (storage.write(kv[0], kv[1])) {
-                return "true";
+                return SUCCESS_RESPONSE;
             }
 
-            std.debug.print("Failed to write to storage\n", .{});
-            return "false";
+            std.debug.print("Failed to write to storage", .{});
+            return FAILURE_RESPONSE;
         },
         .delete => {
-            std.debug.print("Delete command received\n", .{});
-            return "false";
+            const key = messageIterator.rest();
+            if (!storage.delete(key)) {
+                std.debug.print("Failed to delete key from storage: {s}\n", .{key});
+                return FAILURE_RESPONSE;
+            }
+
+            return SUCCESS_RESPONSE;
         },
         .status => {
-            std.debug.print("Status command received\n", .{});
             return "well going our operation";
         },
     }
