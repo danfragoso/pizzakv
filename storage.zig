@@ -1,64 +1,93 @@
 const std = @import("std");
+const hashing = @import("hashing.zig");
 
-const backend_size = 1024 * 1024 * 100;
-var buf: [backend_size][]const u8 = undefined;
+const MAX_RECORDS = 10_000_000;
+const Entry = struct {
+    key: []const u8,
+    value: []const u8,
+    next: ?*Entry,
+};
+var buf: [MAX_RECORDS]?*Entry = undefined;
+
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = arena.allocator();
 
 const EMPTY = "";
-
-pub fn hashKey(k: []const u8) u32 {
-    return djb2(k);
-    //return xoramasrosas(k);
-}
-
-pub fn djb2(key: []const u8) u32 {
-    var hash: u32 = 5381;
-
-    for (key) |c| {
-        hash = ((hash << 5) +% hash) +% c;
-    }
-
-    return hash;
-}
-
-pub fn xoramasrosas(k: []const u8) u32 {
-    var hash: u32 = 17 * 22;
-    const x = "xoramasrosas";
-
-    for (k, 0..) |char, i| {
-        hash = hash +% (char ^ x[i % 12]) << 12;
-    }
-
-    return hash;
-}
+var mutex: std.Thread.Mutex = .{};
 
 pub fn write(key: []const u8, value: []const u8) bool {
-    const valueCopy = allocator.dupe(u8, value) catch {
-        std.debug.print("Failed to duplicate value for key: {s}\n", .{key});
-        return false;
+    mutex.lock();
+    defer mutex.unlock();
+
+    const hash = hashing.hashKey(key);
+    const index = hash % buf.len;
+
+    var current = buf[index];
+    while (current) |entry| {
+        if (std.mem.eql(u8, entry.key, key)) {
+            allocator.free(entry.value);
+            entry.value = allocator.dupe(u8, value) catch return false;
+            return true;
+        }
+
+        current = entry.next;
+    }
+
+    const newEntry = allocator.create(Entry) catch return false;
+    errdefer allocator.destroy(newEntry);
+    newEntry.* = Entry{
+        .key = allocator.dupe(u8, key) catch return false,
+        .value = allocator.dupe(u8, value) catch return false,
+        .next = buf[index],
     };
 
-    const hash = hashKey(key);
-    buf[hash % buf.len] = valueCopy;
+    buf[index] = newEntry;
     return true;
 }
 
 pub fn read(key: []const u8) ?[]const u8 {
-    const hash = hashKey(key);
-    if (buf[hash % buf.len].len == 0) {
-        return null;
+    mutex.lock();
+    defer mutex.unlock();
+
+    const hash = hashing.hashKey(key);
+    var current = buf[hash % buf.len];
+    while (current) |entry| {
+        if (std.mem.eql(u8, entry.key, key)) {
+            return entry.value;
+        }
+        current = entry.next;
     }
 
-    return buf[hash % buf.len];
+    return null;
 }
 
 pub fn delete(key: []const u8) bool {
-    const hash = hashKey(key);
-    if (hash % buf.len >= buf.len) {
-        return false;
+    mutex.lock();
+    defer mutex.unlock();
+
+    const hash = hashing.hashKey(key);
+    const index = hash % buf.len;
+
+    var current = buf[index];
+    var prev: ?*Entry = null;
+
+    while (current) |entry| {
+        if (std.mem.eql(u8, entry.key, key)) {
+            if (prev) |p| {
+                p.next = entry.next;
+            } else {
+                buf[index] = entry.next;
+            }
+
+            allocator.free(entry.key);
+            allocator.free(entry.value);
+            allocator.destroy(entry);
+            return true;
+        }
+
+        prev = entry;
+        current = entry.next;
     }
 
-    buf[hash % buf.len] = EMPTY;
-    return true;
+    return false;
 }
