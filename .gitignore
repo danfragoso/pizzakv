@@ -1,3 +1,6 @@
 pizzakv
 main
 tools/
+.db
+.dbb
+test_nov.js

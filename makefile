@@ -1,5 +1,8 @@
 default: build
 
+run:
+	zig run main.zig 
+
 build:
 	zig build-exe main.zig -O ReleaseFast --name pizzakv
 

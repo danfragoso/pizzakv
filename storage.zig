@@ -1,5 +1,6 @@
 const std = @import("std");
 const hashing = @import("hashing.zig");
+const persistence = @import("persistence.zig");
 
 const MAX_RECORDS = 10_000_000;
 const Entry = struct {
@@ -15,10 +16,7 @@ const allocator = arena.allocator();
 const EMPTY = "";
 var mutex: std.Thread.Mutex = .{};
 
-pub fn write(key: []const u8, value: []const u8) bool {
-    mutex.lock();
-    defer mutex.unlock();
-
+pub fn writeVolatile(key: []const u8, value: []const u8) ?*Entry {
     const hash = hashing.hashKey(key);
     const index = hash % buf.len;
 
@@ -26,22 +24,35 @@ pub fn write(key: []const u8, value: []const u8) bool {
     while (current) |entry| {
         if (std.mem.eql(u8, entry.key, key)) {
             allocator.free(entry.value);
-            entry.value = allocator.dupe(u8, value) catch return false;
-            return true;
+            entry.value = allocator.dupe(u8, value) catch return null;
+            return entry;
         }
 
         current = entry.next;
     }
 
-    const newEntry = allocator.create(Entry) catch return false;
+    const newEntry = allocator.create(Entry) catch return null;
     errdefer allocator.destroy(newEntry);
     newEntry.* = Entry{
-        .key = allocator.dupe(u8, key) catch return false,
-        .value = allocator.dupe(u8, value) catch return false,
+        .key = allocator.dupe(u8, key) catch return null,
+        .value = allocator.dupe(u8, value) catch return null,
         .next = buf[index],
     };
 
     buf[index] = newEntry;
+    return newEntry;
+}
+
+pub fn write(key: []const u8, value: []const u8) bool {
+    mutex.lock();
+    defer mutex.unlock();
+
+    const entry = writeVolatile(key, value);
+    if (entry == null) {
+        return false;
+    }
+
+    persistence.persist(entry.?.key, entry.?.value);
     return true;
 }
 

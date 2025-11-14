@@ -6,17 +6,19 @@ const fmt = std.fmt;
 
 const socket = @import("socket.zig");
 const command = @import("command.zig");
-const storage = @import("storage.zig");
+const persistence = @import("persistence.zig");
 
-const PORT = 8080;
+const PORT = 8085;
 
 pub fn main() !void {
     const listener = try socket.init(PORT);
     defer posix.close(listener);
 
-    std.debug.print("2025 pizzakv! TCP Listening on port {any}\n<danilo.fragoso@dev>\n---------\n", .{PORT});
+    std.debug.print("2025 pizzakv! TCP Listening on port {any}\n<danilo@fragoso.dev>\n---------\n", .{PORT});
     std.debug.print("Commands:\n\nread key\nwrite key|value\ndelete key\nstatus\n", .{});
     std.debug.print("---------\n", .{});
+
+    try persistence.init();
 
     while (true) {
         var client_address: net.Address = undefined;
