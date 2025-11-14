@@ -52,7 +52,7 @@ pub fn write(key: []const u8, value: []const u8) bool {
         return false;
     }
 
-    persistence.persist(entry.?.key, entry.?.value);
+    persistence.persist('W', entry.?.key, entry.?.value);
     return true;
 }
 
@@ -72,10 +72,7 @@ pub fn read(key: []const u8) ?[]const u8 {
     return null;
 }
 
-pub fn delete(key: []const u8) bool {
-    mutex.lock();
-    defer mutex.unlock();
-
+pub fn deleteVolatile(key: []const u8) bool {
     const hash = hashing.hashKey(key);
     const index = hash % buf.len;
 
@@ -101,4 +98,16 @@ pub fn delete(key: []const u8) bool {
     }
 
     return false;
+}
+
+pub fn delete(key: []const u8) bool {
+    mutex.lock();
+    defer mutex.unlock();
+
+    const deleted = deleteVolatile(key);
+    if (deleted) {
+        persistence.persist('D', key, "");
+    }
+
+    return deleted;
 }

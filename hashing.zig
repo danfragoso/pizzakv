@@ -1,7 +1,7 @@
 const std = @import("std");
 
 pub fn hashKey(k: []const u8) u32 {
-    return murmur3(k);
+    return xxhash32(k);
 }
 
 pub fn xoramasrosas(k: []const u8) u32 {

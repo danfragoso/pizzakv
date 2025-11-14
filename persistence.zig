@@ -9,6 +9,11 @@ const allocator = arena.allocator();
 
 var mutex: std.Thread.Mutex = .{};
 
+const OPCode = enum {
+    W,
+    D,
+};
+
 pub fn init() !void {
     try std.Thread.Pool.init(&thread_pool, .{ .allocator = allocator, .n_jobs = 1024 });
 
@@ -38,22 +43,30 @@ pub fn init() !void {
         if (record.len == 0) {
             continue;
         }
+
         record_count += 1;
         std.debug.print("Restoring record N:{d}\r", .{record_count});
 
-        var kv = std.mem.splitScalar(u8, record, '|');
-        const key = kv.first();
-        const value = kv.rest();
+        var recordIterator = std.mem.splitScalar(u8, record, '|');
 
-        _ = storage.writeVolatile(key, value);
+        const opcode = recordIterator.first();
+        const key = recordIterator.next() orelse continue;
+        const value = recordIterator.next() orelse continue;
+
+        const opcodeEnum = std.meta.stringToEnum(OPCode, opcode) orelse continue;
+
+        switch (opcodeEnum) {
+            .W => _ = storage.writeVolatile(key, value),
+            .D => _ = storage.deleteVolatile(key),
+        }
     }
     std.debug.print("Restored {d} records from persistence", .{record_count});
     return;
 }
 
-pub fn persist(key: []const u8, value: []const u8) void {
+pub fn persist(opcode: u8, key: []const u8, value: []const u8) void {
     mutex.lock();
-    const record = std.fmt.allocPrint(allocator, "{s}|{s}\r", .{ key, value }) catch {
+    const record = std.fmt.allocPrint(allocator, "{c}|{s}|{s}\r", .{ opcode, key, value }) catch {
         std.debug.print("Failed to format record for persistence\n", .{});
         mutex.unlock();
         return;
