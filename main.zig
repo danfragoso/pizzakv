@@ -15,7 +15,7 @@ pub fn main() !void {
     defer posix.close(listener);
 
     std.debug.print("2025 pizzakv! TCP Listening on port {any}\n<danilo@fragoso.dev>\n---------\n", .{PORT});
-    std.debug.print("Commands:\n\nread key\nwrite key|value\ndelete key\nstatus\n", .{});
+    std.debug.print("Commands:\n\nread key\nwrite key|value\ndelete key\nkeys\nreads prefix\nstatus\n", .{});
     std.debug.print("---------\n", .{});
 
     try persistence.init();
@@ -38,7 +38,7 @@ pub fn handleConnection(conn: posix.socket_t) !void {
     defer posix.close(conn);
 
     var requestBuffer: [1024 * 1024]u8 = undefined;
-    var responseBuffer: [1024 * 1024]u8 = undefined;
+    var responseBuffer: [1024 * 1024 * 4]u8 = undefined;
 
     while (true) {
         const n = try socket.readUntilCR(conn, &requestBuffer);

@@ -1,5 +1,6 @@
 const std = @import("std");
 const storage = @import("storage.zig");
+const index = @import("index.zig");
 
 const FAILURE_RESPONSE = "error";
 const SUCCESS_RESPONSE = "success";
@@ -9,6 +10,8 @@ const Command = enum {
     write,
     delete,
     status,
+    keys,
+    reads,
 };
 
 fn parseKeyValue(buf: []const u8) ?[2][]const u8 {
@@ -62,6 +65,13 @@ pub fn parse(msg: []const u8) ?[]const u8 {
             }
 
             return SUCCESS_RESPONSE;
+        },
+        .keys => {
+            return index.getAllKeys();
+        },
+        .reads => {
+            const prefix = messageIterator.rest();
+            return index.getValuesByPrefix(prefix);
         },
         .status => {
             return "well going our operation";

@@ -1,4 +1,6 @@
 const std = @import("std");
+
+const index = @import("index.zig");
 const hashing = @import("hashing.zig");
 const persistence = @import("persistence.zig");
 
@@ -18,9 +20,9 @@ var mutex: std.Thread.Mutex = .{};
 
 pub fn writeVolatile(key: []const u8, value: []const u8) ?*Entry {
     const hash = hashing.hashKey(key);
-    const index = hash % buf.len;
+    const bufIdx = hash % buf.len;
 
-    var current = buf[index];
+    var current = buf[bufIdx];
     while (current) |entry| {
         if (std.mem.eql(u8, entry.key, key)) {
             allocator.free(entry.value);
@@ -36,10 +38,11 @@ pub fn writeVolatile(key: []const u8, value: []const u8) ?*Entry {
     newEntry.* = Entry{
         .key = allocator.dupe(u8, key) catch return null,
         .value = allocator.dupe(u8, value) catch return null,
-        .next = buf[index],
+        .next = buf[bufIdx],
     };
 
-    buf[index] = newEntry;
+    buf[bufIdx] = newEntry;
+    index.insert(key);
     return newEntry;
 }
 
@@ -74,9 +77,9 @@ pub fn read(key: []const u8) ?[]const u8 {
 
 pub fn deleteVolatile(key: []const u8) bool {
     const hash = hashing.hashKey(key);
-    const index = hash % buf.len;
+    const bufIdx = hash % buf.len;
 
-    var current = buf[index];
+    var current = buf[bufIdx];
     var prev: ?*Entry = null;
 
     while (current) |entry| {
@@ -84,9 +87,10 @@ pub fn deleteVolatile(key: []const u8) bool {
             if (prev) |p| {
                 p.next = entry.next;
             } else {
-                buf[index] = entry.next;
+                buf[bufIdx] = entry.next;
             }
 
+            index.delete(key);
             allocator.free(entry.key);
             allocator.free(entry.value);
             allocator.destroy(entry);
