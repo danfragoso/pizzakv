@@ -36,21 +36,6 @@ pub fn readUntilCR(conn: posix.socket_t, buf: []u8) !usize {
     return total;
 }
 
-pub fn readUntilNewLine(conn: posix.socket_t, buf: []u8) !usize {
-    var pos: usize = 0;
-    while (pos < buf.len) {
-        const n = try posix.read(conn, buf[pos .. pos + 1]);
-        if (n == 0) {
-            return pos;
-        }
-        if (buf[pos] == '\n') {
-            return pos + 1;
-        }
-        pos += n;
-    }
-    return pos;
-}
-
 pub fn read(conn: posix.socket_t, buf: []u8) !usize {
     var pos: usize = 0;
     while (pos < buf.len) {
