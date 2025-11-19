@@ -27,7 +27,6 @@ pub fn parse(msg: []const u8) ?[]const u8 {
 
     const cmdString = messageIterator.first();
     const command = std.meta.stringToEnum(Command, cmdString) orelse {
-        std.debug.print("Failed to parse command: {s}\n", .{cmdString});
         return null;
     };
 
@@ -36,7 +35,6 @@ pub fn parse(msg: []const u8) ?[]const u8 {
             const key = messageIterator.rest();
 
             const value = storage.read(key) orelse {
-                std.debug.print("Key not found in storage: {s}\n", .{key});
                 return FAILURE_RESPONSE;
             };
 
@@ -46,7 +44,6 @@ pub fn parse(msg: []const u8) ?[]const u8 {
             const kvPair = messageIterator.rest();
 
             const kv = parseKeyValue(kvPair) orelse {
-                std.debug.print("Failed to parse key-value pair", .{});
                 return FAILURE_RESPONSE;
             };
 
@@ -54,13 +51,11 @@ pub fn parse(msg: []const u8) ?[]const u8 {
                 return SUCCESS_RESPONSE;
             }
 
-            std.debug.print("Failed to write to storage", .{});
             return FAILURE_RESPONSE;
         },
         .delete => {
             const key = messageIterator.rest();
             if (!storage.delete(key)) {
-                std.debug.print("Failed to delete key from storage: {s}\n", .{key});
                 return FAILURE_RESPONSE;
             }
 
