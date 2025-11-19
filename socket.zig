@@ -18,18 +18,22 @@ pub fn init(port: u16) !posix.socket_t {
 }
 
 pub fn readUntilCR(conn: posix.socket_t, buf: []u8) !usize {
-    var pos: usize = 0;
-    while (pos < buf.len) {
-        const n = try posix.read(conn, buf[pos .. pos + 1]);
+    var total: usize = 0;
+
+    while (total < buf.len) {
+        const n = try posix.read(conn, buf[total..]);
         if (n == 0) {
-            return pos;
+            return if (total > 0) total else error.ConnectionClosed;
         }
-        if (buf[pos] == '\r') {
-            return pos + 1;
+
+        if (std.mem.indexOfScalar(u8, buf[total .. total + n], '\r')) |offset| {
+            return total + offset;
         }
-        pos += n;
+
+        total += n;
     }
-    return pos;
+
+    return total;
 }
 
 pub fn readUntilNewLine(conn: posix.socket_t, buf: []u8) !usize {
