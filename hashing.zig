@@ -1,7 +1,18 @@
 const std = @import("std");
 
 pub fn hashKey(k: []const u8) u32 {
-    return djb2(k);
+    return fnv1a(k);
+}
+
+pub fn fnv1a(key: []const u8) u32 {
+    var hash: u32 = 2166136261;
+
+    for (key) |c| {
+        hash ^= c;
+        hash *%= 16777619;
+    }
+
+    return hash;
 }
 
 pub fn xoramasrosas(k: []const u8) u32 {

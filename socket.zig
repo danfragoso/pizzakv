@@ -11,8 +11,10 @@ pub fn init(port: u16) !posix.socket_t {
     const listener = try posix.socket(address.any.family, tpe, protocol);
 
     try posix.setsockopt(listener, posix.SOL.SOCKET, posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1)));
+    try posix.setsockopt(listener, posix.SOL.SOCKET, posix.SO.RCVBUF, &std.mem.toBytes(@as(c_int, 1048576))); // 1MB receive buffer
+    try posix.setsockopt(listener, posix.SOL.SOCKET, posix.SO.SNDBUF, &std.mem.toBytes(@as(c_int, 1048576))); // 1MB send buffer
     try posix.bind(listener, &address.any, address.getOsSockLen());
-    try posix.listen(listener, 128);
+    try posix.listen(listener, 1024); // Increased backlog
 
     return listener;
 }
@@ -51,6 +53,18 @@ pub fn read(conn: posix.socket_t, buf: []u8) !usize {
 pub fn write(conn: posix.socket_t, msg: []const u8) !void {
     const written = try posix.write(conn, msg);
     if (written != msg.len) {
+        return error.PartialWrite;
+    }
+}
+
+pub fn writev(conn: posix.socket_t, iovecs: []const posix.iovec_const) !void {
+    var total: usize = 0;
+    for (iovecs) |iov| {
+        total += iov.len;
+    }
+
+    const written = try posix.writev(conn, iovecs);
+    if (written != total) {
         return error.PartialWrite;
     }
 }

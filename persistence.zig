@@ -2,13 +2,16 @@ const std = @import("std");
 const storage = @import("storage.zig");
 
 const MAX_PERSISTENCE_SIZE = 10_000_000 * 100;
+const BUFFER_SIZE = 1024 * 1024 * 8;
+const FLUSH_THRESHOLD = (BUFFER_SIZE * 3) / 4;
+
 var storage_file: ?std.fs.File = null;
-var thread_pool: std.Thread.Pool = undefined;
-var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-const allocator = arena.allocator();
 const c_allocator = std.heap.c_allocator;
 
 var mutex: std.Thread.Mutex = .{};
+
+var write_buffer: [BUFFER_SIZE]u8 = undefined;
+var buffer_position: usize = 0;
 
 const OPCode = enum {
     W,
@@ -16,8 +19,6 @@ const OPCode = enum {
 };
 
 pub fn init() !void {
-    try std.Thread.Pool.init(&thread_pool, .{ .allocator = allocator, .n_jobs = 4 });
-
     const cwd = std.fs.cwd();
     storage_file = cwd.openFile(".db", .{ .mode = .read_write }) catch |err| {
         if (err == std.fs.File.OpenError.FileNotFound) {
@@ -78,21 +79,48 @@ pub fn persist(opcode: u8, key: []const u8, value: []const u8) void {
         std.debug.print("Failed to format record for persistence\n", .{});
         return;
     };
-
-    thread_pool.spawn(persistRecord, .{record}) catch |err| {
-        std.debug.print("Failed to spawn persistence job: {any}\n", .{err});
-        return;
-    };
-}
-
-fn persistRecord(record: []const u8) void {
     defer c_allocator.free(record);
 
     mutex.lock();
     defer mutex.unlock();
 
-    _ = storage_file.?.write(record) catch |err| {
-        std.debug.print("Failed to write record to storage file: {any}\n", .{err});
+    if (buffer_position + record.len > FLUSH_THRESHOLD) {
+        flushBuffer() catch |err| {
+            std.debug.print("Failed to flush buffer: {any}\n", .{err});
+            return;
+        };
+    }
+
+    if (record.len > BUFFER_SIZE) {
+        _ = storage_file.?.write(record) catch |err| {
+            std.debug.print("Failed to write large record to storage file: {any}\n", .{err});
+            return;
+        };
         return;
-    };
+    }
+
+    if (buffer_position + record.len > BUFFER_SIZE) {
+        flushBuffer() catch |err| {
+            std.debug.print("Failed to flush buffer: {any}\n", .{err});
+            return;
+        };
+    }
+
+    @memcpy(write_buffer[buffer_position .. buffer_position + record.len], record);
+    buffer_position += record.len;
+}
+
+pub fn flush() !void {
+    mutex.lock();
+    defer mutex.unlock();
+    try flushBuffer();
+}
+
+fn flushBuffer() !void {
+    if (buffer_position == 0) {
+        return;
+    }
+
+    _ = try storage_file.?.write(write_buffer[0..buffer_position]);
+    buffer_position = 0;
 }

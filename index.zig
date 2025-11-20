@@ -3,7 +3,6 @@ const storage = @import("storage.zig");
 
 var tree_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const tree_allocator = tree_arena.allocator();
-
 const temp_allocator = std.heap.c_allocator;
 
 const RadixNode = struct {
