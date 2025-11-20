@@ -4,7 +4,10 @@ const index = @import("index.zig");
 const hashing = @import("hashing.zig");
 const persistence = @import("persistence.zig");
 
-const INITIAL_BUCKETS = 1_048_576;
+const NUM_SHARDS = 32;
+const TOTAL_BUCKETS = 1_048_576;
+const BUCKETS_PER_SHARD = TOTAL_BUCKETS / NUM_SHARDS;
+
 const Entry = struct {
     key: []const u8,
     value: []const u8,
@@ -12,33 +15,48 @@ const Entry = struct {
     next: ?*Entry,
 };
 
-var buckets: []?*Entry = undefined;
-var buckets_initialized: bool = false;
+const Shard = struct {
+    buckets: []?*Entry,
+    rwlock: std.Thread.RwLock,
+    arena: std.heap.ArenaAllocator,
+    allocator: std.mem.Allocator,
+};
 
-var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-const allocator = arena.allocator();
+var shards: [NUM_SHARDS]Shard = undefined;
+var shards_initialized: bool = false;
 
-var rwlock: std.Thread.RwLock = .{};
 var init_mutex: std.Thread.Mutex = .{};
 
+fn getShardIndex(hash: u32) usize {
+    return hash % NUM_SHARDS;
+}
+
 pub fn init() void {
-    if (buckets_initialized) return;
+    if (shards_initialized) return;
 
     init_mutex.lock();
     defer init_mutex.unlock();
 
-    if (!buckets_initialized) {
-        buckets = allocator.alloc(?*Entry, INITIAL_BUCKETS) catch unreachable;
-        @memset(buckets, null);
-        buckets_initialized = true;
+    if (!shards_initialized) {
+        for (&shards) |*shard| {
+            shard.arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+            shard.allocator = shard.arena.allocator();
+            shard.buckets = shard.allocator.alloc(?*Entry, BUCKETS_PER_SHARD) catch unreachable;
+            @memset(shard.buckets, null);
+            shard.rwlock = .{};
+        }
+        shards_initialized = true;
     }
 }
 
 pub fn restore(key: []const u8, value: []const u8) bool {
-    rwlock.lock();
-    defer rwlock.unlock();
+    const hash = hashing.hashKey(key);
+    const shard_idx = getShardIndex(hash);
 
-    const entry = writeVolatile(key, value);
+    shards[shard_idx].rwlock.lock();
+    defer shards[shard_idx].rwlock.unlock();
+
+    const entry = writeVolatile(hash, key, value);
     if (entry != null) {
         index.insert(entry.?.key);
         return true;
@@ -47,10 +65,13 @@ pub fn restore(key: []const u8, value: []const u8) bool {
 }
 
 pub fn restoreDelete(key: []const u8) bool {
-    rwlock.lock();
-    defer rwlock.unlock();
+    const hash = hashing.hashKey(key);
+    const shard_idx = getShardIndex(hash);
 
-    const deleted = deleteVolatile(key);
+    shards[shard_idx].rwlock.lock();
+    defer shards[shard_idx].rwlock.unlock();
+
+    const deleted = deleteVolatile(hash, key);
     if (deleted) {
         index.delete(key);
         return true;
@@ -58,39 +79,43 @@ pub fn restoreDelete(key: []const u8) bool {
     return false;
 }
 
-pub fn writeVolatile(key: []const u8, value: []const u8) ?*Entry {
-    const hash = hashing.hashKey(key);
-    const bucketIdx = hash % buckets.len;
+pub fn writeVolatile(hash: u32, key: []const u8, value: []const u8) ?*Entry {
+    const shard_idx = getShardIndex(hash);
+    const bucketIdx = hash % shards[shard_idx].buckets.len;
+    const alloc = shards[shard_idx].allocator;
 
-    var current = buckets[bucketIdx];
+    var current = shards[shard_idx].buckets[bucketIdx];
     while (current) |entry| {
         if (entry.hash == hash and std.mem.eql(u8, entry.key, key)) {
-            allocator.free(entry.value);
-            entry.value = allocator.dupe(u8, value) catch return null;
+            alloc.free(entry.value);
+            entry.value = alloc.dupe(u8, value) catch return null;
             return entry;
         }
 
         current = entry.next;
     }
 
-    const newEntry = allocator.create(Entry) catch return null;
-    errdefer allocator.destroy(newEntry);
+    const newEntry = alloc.create(Entry) catch return null;
+    errdefer alloc.destroy(newEntry);
     newEntry.* = Entry{
-        .key = allocator.dupe(u8, key) catch return null,
-        .value = allocator.dupe(u8, value) catch return null,
+        .key = alloc.dupe(u8, key) catch return null,
+        .value = alloc.dupe(u8, value) catch return null,
         .hash = hash, // Cache hash value
-        .next = buckets[bucketIdx],
+        .next = shards[shard_idx].buckets[bucketIdx],
     };
 
-    buckets[bucketIdx] = newEntry;
+    shards[shard_idx].buckets[bucketIdx] = newEntry;
     return newEntry;
 }
 
 pub fn write(key: []const u8, value: []const u8) bool {
-    rwlock.lock();
-    defer rwlock.unlock();
+    const hash = hashing.hashKey(key);
+    const shard_idx = getShardIndex(hash);
 
-    const entry = writeVolatile(key, value);
+    shards[shard_idx].rwlock.lock();
+    defer shards[shard_idx].rwlock.unlock();
+
+    const entry = writeVolatile(hash, key, value);
     if (entry == null) {
         return false;
     }
@@ -101,13 +126,15 @@ pub fn write(key: []const u8, value: []const u8) bool {
 }
 
 pub fn read(key: []const u8) ?[]const u8 {
-    rwlock.lockShared();
-    defer rwlock.unlockShared();
-
-    if (!buckets_initialized) return null;
+    if (!shards_initialized) return null;
 
     const hash = hashing.hashKey(key);
-    var current = buckets[hash % buckets.len];
+    const shard_idx = getShardIndex(hash);
+
+    shards[shard_idx].rwlock.lockShared();
+    defer shards[shard_idx].rwlock.unlockShared();
+
+    var current = shards[shard_idx].buckets[hash % shards[shard_idx].buckets.len];
     while (current) |entry| {
         if (entry.hash == hash and std.mem.eql(u8, entry.key, key)) {
             return entry.value;
@@ -118,12 +145,13 @@ pub fn read(key: []const u8) ?[]const u8 {
     return null;
 }
 
-pub fn deleteVolatile(key: []const u8) bool {
-    if (!buckets_initialized) return false;
-    const hash = hashing.hashKey(key);
-    const bucketIdx = hash % buckets.len;
+pub fn deleteVolatile(hash: u32, key: []const u8) bool {
+    if (!shards_initialized) return false;
+    const shard_idx = getShardIndex(hash);
+    const bucketIdx = hash % shards[shard_idx].buckets.len;
+    const alloc = shards[shard_idx].allocator;
 
-    var current = buckets[bucketIdx];
+    var current = shards[shard_idx].buckets[bucketIdx];
     var prev: ?*Entry = null;
 
     while (current) |entry| {
@@ -131,12 +159,12 @@ pub fn deleteVolatile(key: []const u8) bool {
             if (prev) |p| {
                 p.next = entry.next;
             } else {
-                buckets[bucketIdx] = entry.next;
+                shards[shard_idx].buckets[bucketIdx] = entry.next;
             }
 
-            allocator.free(entry.key);
-            allocator.free(entry.value);
-            allocator.destroy(entry);
+            alloc.free(entry.key);
+            alloc.free(entry.value);
+            alloc.destroy(entry);
             return true;
         }
 
@@ -148,10 +176,12 @@ pub fn deleteVolatile(key: []const u8) bool {
 }
 
 pub fn delete(key: []const u8) bool {
-    rwlock.lock();
-    defer rwlock.unlock();
+    const hash = hashing.hashKey(key);
+    const shard_idx = getShardIndex(hash);
+    shards[shard_idx].rwlock.lock();
+    defer shards[shard_idx].rwlock.unlock();
 
-    const deleted = deleteVolatile(key);
+    const deleted = deleteVolatile(hash, key);
     if (deleted) {
         index.delete(key);
         persistence.persist('D', key, "");

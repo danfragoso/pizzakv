@@ -58,8 +58,8 @@ pub fn init() !void {
         const opcodeEnum = std.meta.stringToEnum(OPCode, opcode) orelse continue;
 
         switch (opcodeEnum) {
-            .W => _ = storage.writeVolatile(key, value),
-            .D => _ = storage.deleteVolatile(key),
+            .W => _ = storage.restore(key, value),
+            .D => _ = storage.restoreDelete(key),
         }
     }
     std.debug.print("Restored {d} records from persistence", .{record_count});
