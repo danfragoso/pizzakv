@@ -8,15 +8,28 @@ const socket = @import("socket.zig");
 const command = @import("command.zig");
 const storage = @import("storage.zig");
 const persistence = @import("persistence.zig");
+const redis = @import("redis.zig");
 
 const PORT = 8085;
 var should_exit = std.atomic.Value(bool).init(false);
+var redis_mode = false;
+
 fn handleSignal(sig: c_int) callconv(.c) void {
     _ = sig;
     should_exit.store(true, .seq_cst);
 }
 
 pub fn main() !void {
+    var args = try std.process.argsWithAllocator(std.heap.page_allocator);
+    defer args.deinit();
+
+    _ = args.skip();
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "-redis")) {
+            redis_mode = true;
+        }
+    }
+
     const empty_mask = std.mem.zeroes(posix.sigset_t);
     const act = posix.Sigaction{
         .handler = .{ .handler = handleSignal },
@@ -31,7 +44,11 @@ pub fn main() !void {
     defer posix.close(listener);
 
     std.debug.print("2025 pizzakv! TCP Listening on port {any}\n<danilo@fragoso.dev>\n---------\n", .{PORT});
-    std.debug.print("Commands:\n\nread key\nwrite key|value\ndelete key\nkeys\nreads prefix\nstatus\n", .{});
+    if (redis_mode) {
+        std.debug.print("Mode: Redis Protocol (RESP)\nCommands: SET, GET, DEL\n", .{});
+    } else {
+        std.debug.print("Commands:\n\nread key\nwrite key|value\ndelete key\nkeys\nreads prefix\nstatus\n", .{});
+    }
     std.debug.print("---------\n", .{});
 
     storage.init();
@@ -46,7 +63,7 @@ pub fn main() !void {
             },
         };
 
-        const ready = posix.poll(&poll_fds, 1000) catch |err| {
+        const ready = posix.poll(&poll_fds, 100) catch |err| {
             if (should_exit.load(.seq_cst)) break;
             std.debug.print("poll error: {any}\n", .{err});
             continue;
@@ -74,8 +91,13 @@ pub fn main() !void {
 
         posix.setsockopt(conn, posix.IPPROTO.TCP, posix.TCP.NODELAY, &std.mem.toBytes(@as(c_int, 1))) catch {};
 
-        const thread = try std.Thread.spawn(.{}, handleConnection, .{conn});
-        thread.detach();
+        if (redis_mode) {
+            const thread = try std.Thread.spawn(.{}, handleRedisConnection, .{conn});
+            thread.detach();
+        } else {
+            const thread = try std.Thread.spawn(.{}, handleConnection, .{conn});
+            thread.detach();
+        }
     }
 
     std.debug.print("\nShutdown signal received...\n", .{});
@@ -113,5 +135,60 @@ pub fn handleConnection(conn: posix.socket_t) !void {
         socket.writev(conn, &iovecs) catch |err| {
             std.debug.print("error writing: {any}", .{err});
         };
+    }
+}
+
+pub fn handleRedisConnection(conn: posix.socket_t) !void {
+    defer posix.close(conn);
+
+    var requestBuffer: [2 * 1024 * 1024]u8 = undefined;
+    var responseBuffer: [2 * 1024 * 1024]u8 = undefined;
+    var buffered_len: usize = 0;
+
+    const is_darwin = @import("builtin").target.os.tag == .macos;
+    const cork_option = if (is_darwin) posix.TCP.NOPUSH else posix.TCP.CORK;
+
+    while (true) {
+        const n = posix.read(conn, requestBuffer[buffered_len..]) catch |err| {
+            if (err == error.ConnectionResetByPeer) break;
+            return err;
+        };
+        if (n == 0) break;
+
+        const total_len = buffered_len + n;
+        var offset: usize = 0;
+        var response_offset: usize = 0;
+
+        posix.setsockopt(conn, posix.IPPROTO.TCP, cork_option, &std.mem.toBytes(@as(c_int, 1))) catch {};
+
+        while (offset < total_len) {
+            const result = redis.parseCommand(requestBuffer[offset..total_len]) orelse {
+                break;
+            };
+
+            const response = redis.executeCommand(result.cmd, responseBuffer[response_offset..]);
+            response_offset += response.len;
+            offset += result.bytes_consumed;
+        }
+
+        posix.setsockopt(conn, posix.IPPROTO.TCP, cork_option, &std.mem.toBytes(@as(c_int, 0))) catch {};
+
+        if (response_offset > 0) {
+            _ = posix.send(conn, responseBuffer[0..response_offset], posix.MSG.NOSIGNAL) catch |err| {
+                std.debug.print("error writing: {any}", .{err});
+            };
+        }
+
+        if (offset < total_len) {
+            const remaining = total_len - offset;
+            if (remaining > 0 and remaining < requestBuffer.len / 2) {
+                @memcpy(requestBuffer[0..remaining], requestBuffer[offset..total_len]);
+                buffered_len = remaining;
+            } else {
+                buffered_len = 0;
+            }
+        } else {
+            buffered_len = 0;
+        }
     }
 }

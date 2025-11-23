@@ -75,39 +75,63 @@ pub fn init() !void {
 }
 
 pub fn persist(opcode: u8, key: []const u8, value: []const u8) void {
-    const record = std.fmt.allocPrint(c_allocator, "{c}|{s}|{s}\r", .{ opcode, key, value }) catch {
-        std.debug.print("Failed to format record for persistence\n", .{});
-        return;
-    };
-    defer c_allocator.free(record);
+    const record_len = 1 + 1 + key.len + 1 + value.len + 1;
 
     mutex.lock();
     defer mutex.unlock();
 
-    if (buffer_position + record.len > FLUSH_THRESHOLD) {
+    if (buffer_position + record_len > FLUSH_THRESHOLD) {
         flushBuffer() catch |err| {
             std.debug.print("Failed to flush buffer: {any}\n", .{err});
             return;
         };
     }
 
-    if (record.len > BUFFER_SIZE) {
-        _ = storage_file.?.write(record) catch |err| {
+    if (record_len > BUFFER_SIZE) {
+        var temp_buffer: [BUFFER_SIZE]u8 = undefined;
+        var pos: usize = 0;
+        temp_buffer[pos] = opcode;
+        pos += 1;
+        temp_buffer[pos] = '|';
+        pos += 1;
+        @memcpy(temp_buffer[pos .. pos + key.len], key);
+        pos += key.len;
+        temp_buffer[pos] = '|';
+        pos += 1;
+        @memcpy(temp_buffer[pos .. pos + value.len], value);
+        pos += value.len;
+        temp_buffer[pos] = '\r';
+        pos += 1;
+
+        _ = storage_file.?.write(temp_buffer[0..pos]) catch |err| {
             std.debug.print("Failed to write large record to storage file: {any}\n", .{err});
             return;
         };
         return;
     }
 
-    if (buffer_position + record.len > BUFFER_SIZE) {
+    if (buffer_position + record_len > BUFFER_SIZE) {
         flushBuffer() catch |err| {
             std.debug.print("Failed to flush buffer: {any}\n", .{err});
             return;
         };
     }
 
-    @memcpy(write_buffer[buffer_position .. buffer_position + record.len], record);
-    buffer_position += record.len;
+    var pos = buffer_position;
+    write_buffer[pos] = opcode;
+    pos += 1;
+    write_buffer[pos] = '|';
+    pos += 1;
+    @memcpy(write_buffer[pos .. pos + key.len], key);
+    pos += key.len;
+    write_buffer[pos] = '|';
+    pos += 1;
+    @memcpy(write_buffer[pos .. pos + value.len], value);
+    pos += value.len;
+    write_buffer[pos] = '\r';
+    pos += 1;
+
+    buffer_position = pos;
 }
 
 pub fn flush() !void {

@@ -181,12 +181,13 @@ fn countKeys(node: *RadixNode) usize {
 }
 
 const MAX_KEYS_RETURN = 10000;
+const MAX_KEY_LENGTH = 1024;
 
-fn collectKeys(node: *RadixNode, prefix: []const u8, keys: *std.ArrayListUnmanaged([]const u8), max_keys: usize) void {
+fn collectKeysWithBuffer(node: *RadixNode, prefix_buffer: []u8, prefix_len: usize, keys: *std.ArrayListUnmanaged([]const u8), max_keys: usize) void {
     if (keys.items.len >= max_keys) return;
 
     if (node.is_terminal) {
-        const key = temp_allocator.dupe(u8, prefix) catch return;
+        const key = temp_allocator.dupe(u8, prefix_buffer[0..prefix_len]) catch return;
         keys.append(temp_allocator, key) catch return;
     }
 
@@ -194,10 +195,20 @@ fn collectKeys(node: *RadixNode, prefix: []const u8, keys: *std.ArrayListUnmanag
     while (it.next()) |entry| {
         if (keys.items.len >= max_keys) break;
         const child = entry.value_ptr.*;
-        const new_prefix = std.mem.concat(temp_allocator, u8, &[_][]const u8{ prefix, child.edge }) catch return;
-        collectKeys(child, new_prefix, keys, max_keys);
-        temp_allocator.free(new_prefix);
+        const edge_len = child.edge.len;
+
+        if (prefix_len + edge_len > MAX_KEY_LENGTH) continue;
+
+        @memcpy(prefix_buffer[prefix_len .. prefix_len + edge_len], child.edge);
+        collectKeysWithBuffer(child, prefix_buffer, prefix_len + edge_len, keys, max_keys);
     }
+}
+
+fn collectKeys(node: *RadixNode, prefix: []const u8, keys: *std.ArrayListUnmanaged([]const u8), max_keys: usize) void {
+    var prefix_buffer: [MAX_KEY_LENGTH]u8 = undefined;
+    if (prefix.len > MAX_KEY_LENGTH) return;
+    @memcpy(prefix_buffer[0..prefix.len], prefix);
+    collectKeysWithBuffer(node, &prefix_buffer, prefix.len, keys, max_keys);
 }
 
 pub fn getKeysFromNode(node: *RadixNode, prefix: []const u8) [][]const u8 {
