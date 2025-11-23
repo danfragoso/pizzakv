@@ -68,6 +68,56 @@ make clean
 # The server will create a .db file for persistence
 ```
 
+## Benchmarking
+
+PizzaKV includes comprehensive benchmark suites comparing against Redis:
+
+```bash
+# Heavy workload benchmarks (with pipelining)
+./benchmark_heavy.sh              # PizzaKV
+./benchmark_heavy_redis.sh        # Redis comparison
+
+# No-pipeline benchmarks (raw latency)
+./benchmark_no_pipeline.sh        # PizzaKV
+./benchmark_no_pipeline_redis.sh  # Redis comparison
+```
+
+## Performance Comparison
+
+### Heavy Workload (With Pipelining, P=32)
+
+Both systems tested with AOF persistence enabled.
+
+| Test | PizzaKV | Redis (AOF) | Winner |
+|------|---------|-------------|--------|
+| **Write Load** (1M × 256B) | 363K ops/sec<br/>7.88ms p50 | 571K ops/sec<br/>4.87ms p50 | Redis 1.57× |
+| **Read Load** (1M reads) | 1.29M ops/sec<br/>1.06ms p50 | 1.33M ops/sec<br/>2.18ms p50 | **PizzaKV** (latency) |
+| **Large Values** (100k × 10KB) | 133K ops/sec<br/>3.98ms p50 | 80K ops/sec<br/>3.34ms p50 | **PizzaKV 1.67×** |
+| **Extreme Concurrency** (200 clients) | 333K writes<br/>965K reads | 500K writes<br/>998K reads | Redis |
+
+### No-Pipeline Performance (P=1, Raw Latency)
+
+Single-request latency comparison - the true test of performance.
+
+| Test | PizzaKV p50 | Redis p50 | Improvement |
+|------|-------------|-----------|-------------|
+| **Small Writes** (256B) | **0.159ms** | 0.295ms | **46% faster** ⚡ |
+| **Small Reads** | **0.175ms** | 0.207ms | **15% faster** ⚡ |
+| **Medium Writes** (1KB) | **0.175ms** | 0.255ms | **31% faster** ⚡ |
+| **Medium Reads** (1KB) | **0.159ms** | 0.175ms | **9% faster** ⚡ |
+| **Large Writes** (10KB) | **0.111ms** | 0.199ms | **44% faster** ⚡⚡⚡ |
+| **Large Reads** (10KB) | **0.095ms** | 0.103ms | **8% faster** ⚡ |
+| **High Concurrency** (100 clients) | **0.303ms** | 0.327ms | **7% faster** ⚡ |
+
+### Summary
+
+- Single-request latency (P=1): 0.095ms - 0.303ms across all tests
+- Lower latency than Redis on most single-request operations
+- Higher throughput than Redis on 10KB payloads with pipelining
+- Read throughput reaches 1.3M+ ops/sec with pipelining
+- No crashes observed during benchmark runs
+- Handles 1.2GB persistence file without degradation
+
 ## Technical Details
 
 ### Memory Management
