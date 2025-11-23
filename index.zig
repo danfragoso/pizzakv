@@ -5,6 +5,8 @@ var tree_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const tree_allocator = tree_arena.allocator();
 const temp_allocator = std.heap.c_allocator;
 
+var tree_mutex: std.Thread.Mutex = .{};
+
 const RadixNode = struct {
     edge: []const u8,
     children: std.StringHashMap(*RadixNode),
@@ -50,6 +52,9 @@ fn commonPrefixLen(a: []const u8, b: []const u8) usize {
 }
 
 pub fn insert(key: []const u8) void {
+    tree_mutex.lock();
+    defer tree_mutex.unlock();
+
     ensureRoot();
     if (key.len == 0) return;
 
@@ -116,6 +121,9 @@ pub fn insert(key: []const u8) void {
 }
 
 pub fn delete(key: []const u8) void {
+    tree_mutex.lock();
+    defer tree_mutex.unlock();
+
     ensureRoot();
     if (key.len == 0) return;
 
@@ -218,6 +226,9 @@ pub fn getKeysFromNode(node: *RadixNode, prefix: []const u8) [][]const u8 {
 }
 
 pub fn getKeysByPrefix(prefix: []const u8) []const u8 {
+    tree_mutex.lock();
+    defer tree_mutex.unlock();
+
     ensureRoot();
     const node = searchByPrefix(prefix) orelse return "";
     const keys = getKeysFromNode(node, prefix);
@@ -226,6 +237,9 @@ pub fn getKeysByPrefix(prefix: []const u8) []const u8 {
 }
 
 pub fn getValuesByPrefix(prefix: []const u8) []const u8 {
+    tree_mutex.lock();
+    defer tree_mutex.unlock();
+
     ensureRoot();
     const node = searchByPrefix(prefix) orelse return "";
     const keys = getKeysFromNode(node, prefix);
@@ -241,6 +255,9 @@ pub fn getValuesByPrefix(prefix: []const u8) []const u8 {
 }
 
 pub fn getAllKeys() []const u8 {
+    tree_mutex.lock();
+    defer tree_mutex.unlock();
+
     ensureRoot();
     const keys = getKeysFromNode(root, &[_]u8{});
     if (keys.len == 0) return "";

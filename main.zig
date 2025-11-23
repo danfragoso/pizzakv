@@ -12,6 +12,7 @@ const redis = @import("redis.zig");
 
 const PORT = 8085;
 var should_exit = std.atomic.Value(bool).init(false);
+var active_connections = std.atomic.Value(u32).init(0);
 var redis_mode = false;
 
 fn handleSignal(sig: c_int) callconv(.c) void {
@@ -101,12 +102,29 @@ pub fn main() !void {
     }
 
     std.debug.print("\nShutdown signal received...\n", .{});
+
+    const max_wait_ms = 5000;
+    const wait_interval_ms = 100;
+    var waited_ms: u32 = 0;
+
+    while (active_connections.load(.seq_cst) > 0 and waited_ms < max_wait_ms) {
+        posix.nanosleep(0, wait_interval_ms * std.time.ns_per_ms);
+        waited_ms += wait_interval_ms;
+    }
+
+    const remaining = active_connections.load(.seq_cst);
+    if (remaining > 0) {
+        std.debug.print("Warning: {d} connections still active after {d}ms, forcing shutdown...\n", .{ remaining, max_wait_ms });
+    }
+
     persistence.flush() catch |err| {
         std.debug.print("Failed to flush persistence: {any}\n", .{err});
     };
 }
 
 pub fn handleConnection(conn: posix.socket_t) !void {
+    _ = active_connections.fetchAdd(1, .seq_cst);
+    defer _ = active_connections.fetchSub(1, .seq_cst);
     defer posix.close(conn);
 
     var requestBuffer: [1024 * 1024]u8 = undefined;
@@ -139,6 +157,8 @@ pub fn handleConnection(conn: posix.socket_t) !void {
 }
 
 pub fn handleRedisConnection(conn: posix.socket_t) !void {
+    _ = active_connections.fetchAdd(1, .seq_cst);
+    defer _ = active_connections.fetchSub(1, .seq_cst);
     defer posix.close(conn);
 
     var requestBuffer: [2 * 1024 * 1024]u8 = undefined;

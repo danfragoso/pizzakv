@@ -4,7 +4,7 @@ const index = @import("index.zig");
 const hashing = @import("hashing.zig");
 const persistence = @import("persistence.zig");
 
-const NUM_SHARDS = 32;
+const NUM_SHARDS = 64;
 const TOTAL_BUCKETS = 1_048_576;
 const BUCKETS_PER_SHARD = TOTAL_BUCKETS / NUM_SHARDS;
 
